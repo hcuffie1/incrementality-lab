@@ -115,8 +115,9 @@ def placebo_test(panel: pd.DataFrame, n_iter: int = 500, seed: int = 0) -> dict:
         base["treated"] = base["market"].isin(fake_t)
         fakes.append(did_estimate(base)["estimate"])
     fakes = np.array(fakes)
-    return {"estimate": real, "placebo_p_value": float((np.abs(fakes) >= abs(real)).mean()),
-            "placebo_sd": float(fakes.std())}
+    n_extreme = int((np.abs(fakes) >= abs(real)).sum())
+    return {"estimate": real, "placebo_p_value": n_extreme / n_iter, "n_extreme": n_extreme,
+            "n_iter": n_iter, "placebo_sd": float(fakes.std())}
 
 
 def coverage_study(n_sims: int = 150, lift: float = 0.05, method: str | None = "rmse") -> dict:

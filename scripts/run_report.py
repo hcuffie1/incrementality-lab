@@ -33,6 +33,14 @@ def fmt_p(p):
     return "<0.001" if p < 0.001 else f"{p:.3f}"
 
 
+def p_eq(p):
+    """In-text p-value: 'p < 0.001' or 'p = 0.123'."""
+    return "p < 0.001" if p < 0.001 else f"p = {p:.3f}"
+
+
+ARM_NAMES = {"mens": "men's", "womens": "women's"}
+
+
 def money(x, d=0):
     return f"{'-' if x < 0 else ''}${abs(x):,.{d}f}"
 
@@ -43,6 +51,28 @@ def md_table(df: pd.DataFrame) -> str:
     for _, r in df.iterrows():
         lines.append("| " + " | ".join(str(r[c]) for c in cols) + " |")
     return "\n".join(lines)
+
+
+def placebo_p_text(plac: dict) -> str:
+    """A zero count means p is below the test's resolution, not exactly zero."""
+    if plac["n_extreme"] == 0:
+        return f"p < {1 / plac['n_iter']:.4f}"
+    return p_eq(plac["placebo_p_value"])
+
+
+def targeting_headline(args, best: dict, full: dict, sens_raw: list) -> str:
+    lead = f"At ${args.cost:.2f} per email and {fmt_pct(args.margin, 0)} margin, "
+    if best["share_emailed"] < 1.0:
+        return (lead + f"emailing the top {fmt_pct(best['share_emailed'], 0)} by predicted uplift earns "
+                f"{money(best['net_profit_per_1000_customers'])} per 1,000 customers vs "
+                f"{money(full['net_profit_per_1000_customers'])} for emailing everyone.")
+    text = lead + f"emailing everyone is best ({money(best['net_profit_per_1000_customers'])} per 1,000 customers)."
+    pricier = [(c, b) for c, b in sens_raw if c > args.cost and b["share_emailed"] < 1.0]
+    if pricier:
+        c, b = pricier[0]
+        text += (f" Targeting starts to pay at ${c:.2f} per email, where the top {fmt_pct(b['share_emailed'], 0)} "
+                 f"by predicted uplift earns {money(b['net_profit_per_1000_customers'])}.")
+    return text
 
 
 def main():
@@ -69,7 +99,7 @@ def main():
     out.append("## 1. Randomization checks\n")
     out.append(f"Arm sizes: {', '.join(f'{a} {c:,}' for a, c in counts.items())}. "
                f"Sample ratio mismatch test against an equal split: chi-square {srm['chi2']:.2f}, "
-               f"p = {fmt_p(srm['p_value'])} ({'no SRM' if srm['p_value'] > 0.001 else 'SRM DETECTED, stop and investigate'}).\n")
+               f"{p_eq(srm['p_value'])} ({'no SRM' if srm['p_value'] > 0.001 else 'SRM DETECTED, stop and investigate'}).\n")
     bal_rows = []
     for arm in ["mens", "womens"]:
         smd = checks.standardized_mean_differences(df, "arm", arm, "control", PRE_COVARIATES)
@@ -109,14 +139,14 @@ def main():
     lo, hi = ab.bootstrap_diff_ci(trt["spend"], ctrl["spend"], n_boot=1000, seed=args.seed)
     w99 = ab.welch(ab.winsorize(trt["spend"]), ab.winsorize(ctrl["spend"]))
     mw = ab.mann_whitney(trt["spend"], ctrl["spend"])
-    out.append(f"Spend is zero for most customers and heavy-tailed among buyers, so the {args.arm} spend effect "
+    out.append(f"Spend is zero for most customers and heavy-tailed among buyers, so the {ARM_NAMES[args.arm]} spend effect "
                f"gets three extra reads: bootstrap 95% CI [{lo:+.3f}, {hi:+.3f}]; winsorized at the 99th "
-               f"percentile {w99['diff']:+.3f} (p = {fmt_p(w99['p_value'])}); Mann-Whitney p = {fmt_p(mw)}. "
+               f"percentile {w99['diff']:+.3f} ({p_eq(w99['p_value'])}); Mann-Whitney {p_eq(mw)}. "
                "CUPED uses pre-period `history` spend as the covariate; its variance reduction is small here "
                "because last year's spend predicts a two-week window weakly.\n")
 
     # 3. Heterogeneous effects
-    out.append(f"## 3. Who responds: uplift modeling for the {args.arm} email (outcome: visit)\n")
+    out.append(f"## 3. Who responds: uplift modeling for the {ARM_NAMES[args.arm]} email (outcome: visit)\n")
     sub = pd.concat([trt, ctrl]).reset_index(drop=True)
     X = feature_matrix(sub).to_numpy()
     t = (sub["arm"] == args.arm).to_numpy()
@@ -143,7 +173,7 @@ def main():
          "observed": f"{100 * r['observed']:+.2f} pp", "n": f"{r['n']:,}"} for r in dec])) + "\n")
     curves = {"X-learner": uplift.qini_curve(y[test], t[test], s_x),
               "T-learner": uplift.qini_curve(y[test], t[test], s_t)}
-    figures.qini_plot(curves, os.path.join(FIGS, "qini.png"), f"Qini curve, {args.arm} email, test half")
+    figures.qini_plot(curves, os.path.join(FIGS, "qini.png"), f"Qini curve, {ARM_NAMES[args.arm]} email, test half")
     figures.decile_plot(dec, os.path.join(FIGS, "uplift_deciles.png"), "Predicted vs observed lift by decile")
     out.append("![Qini curve](figures/qini.png)\n\n![Deciles](figures/uplift_deciles.png)\n")
 
@@ -159,10 +189,11 @@ def main():
         "95% interval": f"[{money(r['profit_low'])}, {money(r['profit_high'])}]"} for r in tab])) + "\n")
     best = max(tab, key=lambda r: r["net_profit_per_1000_customers"])
     full = tab[-1]
-    sens = []
+    sens, sens_raw = [], []
     for c in [0.05, 0.10, 0.20, 0.30]:
         tb = policy.targeting_table(spend, t[test], s_x, c, args.margin)
         b = max(tb, key=lambda r: r["net_profit_per_1000_customers"])
+        sens_raw.append((c, b))
         sens.append({"cost per email": f"${c:.2f}", "best share to email": fmt_pct(b["share_emailed"], 0),
                      "profit per 1,000": money(b["net_profit_per_1000_customers"])})
     out.append("Sensitivity of the decision to email cost:\n\n" + md_table(pd.DataFrame(sens)) + "\n")
@@ -183,7 +214,8 @@ def main():
                f"[{fmt_pct(naive['ci_low'], 2)}, {fmt_pct(naive['ci_high'], 2)}]\n"
                f"- DiD with {matched['n_control']} path-matched controls: {fmt_pct(matched['estimate'], 2)} "
                f"[{fmt_pct(matched['ci_low'], 2)}, {fmt_pct(matched['ci_high'], 2)}]\n"
-               f"- Placebo test (300 fake launches among control markets): p = {fmt_p(plac['placebo_p_value'])}\n\n"
+               f"- Placebo test: {plac['n_extreme']} of {plac['n_iter']} fake launches among control markets produced an "
+               f"estimate as large as the real one ({placebo_p_text(plac)})\n\n"
                "![Event study](figures/event_study.png)\n")
     cov_rows = []
     covs = {}
@@ -210,13 +242,11 @@ def main():
     s = ate[(ate["arm"] == args.arm) & (ate["metric"] == "spend")].iloc[0]
     headline = (
         f"_Last run on: {source}._\n\n"
-        f"- Randomization holds: SRM p = {fmt_p(srm['p_value'])}; largest pre-period covariate SMD {max_smd:.3f} "
+        f"- Randomization holds: SRM {p_eq(srm['p_value'])}; largest pre-period covariate SMD {max_smd:.3f} "
         f"({'all within' if max_smd < 0.1 else 'NOT all within'} the 0.1 bar).\n"
-        f"- The {args.arm} email lifted visits {m['lift']} ({m['relative']} relative) and spend {s['lift']} per customer over two weeks.\n"
+        f"- The {ARM_NAMES[args.arm]} email lifted visits {m['lift']} ({m['relative']} relative) and spend {s['lift']} per customer over two weeks.\n"
         f"- X-learner Qini {q['X-learner'] * 1000:.2f} vs T-learner {q['T-learner'] * 1000:.2f} vs random {q['Random'] * 1000:.2f} (x1000, held-out half).\n"
-        f"- At ${args.cost:.2f} per email and {fmt_pct(args.margin, 0)} margin, emailing the top "
-        f"{fmt_pct(best['share_emailed'], 0)} by predicted uplift earns {money(best['net_profit_per_1000_customers'])} "
-        f"per 1,000 customers vs {money(full['net_profit_per_1000_customers'])} for emailing everyone.\n"
+        f"- {targeting_headline(args, best, full, sens_raw)}\n"
         f"- Geo DiD with path-matched controls averages {fmt_pct(cov['mean_estimate'], 2)} against a true 5.0% lift "
         f"over {cov['n_sims']} simulated tests, with {fmt_pct(cov['coverage'], 0)} interval coverage. Correlation "
         f"matching, a common default, overstates it by {100 * covs['corr']['bias']:.2f} pp.\n"

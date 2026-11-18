@@ -9,12 +9,12 @@ Every estimator is first run on simulated data where the true effect is known. I
 ## Headline results
 
 <!-- RESULTS:START -->
-_Last run on: SYNTHETIC data with a known treatment effect (`--synthetic`)._
+_Last run on: Hillstrom MineThatData email experiment (64,000 customers)._
 
-- Randomization holds: SRM p = 0.660; largest pre-period covariate SMD 0.014 (all within the 0.1 bar).
-- The mens email lifted visits +2.87 pp (32.0% relative) and spend +$0.164 per customer over two weeks.
-- X-learner Qini 2.74 vs T-learner 2.48 vs random 0.64 (x1000, held-out half).
-- At $0.10 per email and 30% margin, emailing the top 40% by predicted uplift earns $10 per 1,000 customers vs -$92 for emailing everyone.
+- Randomization holds: SRM p = 0.904; largest pre-period covariate SMD 0.009 (all within the 0.1 bar).
+- The men's email lifted visits +7.66 pp (72.1% relative) and spend +$0.770 per customer over two weeks.
+- X-learner Qini 0.87 vs T-learner 0.29 vs random -0.48 (x1000, held-out half).
+- At $0.10 per email and 30% margin, emailing everyone is best ($139 per 1,000 customers). Targeting starts to pay at $0.20 per email, where the top 60% by predicted uplift earns $68.
 - Geo DiD with path-matched controls averages 5.08% against a true 5.0% lift over 150 simulated tests, with 97% interval coverage. Correlation matching, a common default, overstates it by 0.49 pp.
 <!-- RESULTS:END -->
 
