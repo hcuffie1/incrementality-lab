@@ -39,7 +39,7 @@ Matching control markets on the correlation of their pre-period sales looks like
 ## Run it
 
 ```bash
-git clone https://github.com/<your-username>/incrementality-lab.git
+git clone https://github.com/hcuffie1/incrementality-lab.git
 cd incrementality-lab
 make install            # pip install -e ".[dev]"
 make test               # 11 tests, each against a known answer
